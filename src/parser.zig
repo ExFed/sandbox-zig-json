@@ -25,7 +25,7 @@ const Allocator = std.mem.Allocator;
 //      false
 //      null
 
-const TokenType = enum {
+pub const TokenType = enum {
     String,
     Number,
     LBrace,
@@ -39,16 +39,14 @@ const TokenType = enum {
     Null,
 };
 
-const Location = struct {
+pub const Location = struct {
     const Self = @This();
+
     line: usize,
     column: usize,
 
     fn init() Location {
-        return Location{
-            .line = 1,
-            .column = 1,
-        };
+        return of(1, 1);
     }
 
     fn of(line: usize, column: usize) Location {
@@ -80,11 +78,11 @@ const Location = struct {
         _ = fmt;
         _ = options;
 
-        try writer.print("{}:{}", .{ self.line, self.column });
+        try writer.print("{d}:{d}", .{ self.line, self.column });
     }
 };
 
-const Token = struct {
+pub const Token = struct {
     const Self = @This();
     token_type: TokenType,
     location: Location,
@@ -99,35 +97,45 @@ const Token = struct {
         _ = fmt;
         _ = options;
 
-        try writer.print("(Token {} {} {s})", .{ self.token_type, self.location, self.value });
+        try writer.print("(Token {any} {any} {s})", .{ self.token_type, self.location, self.value });
     }
 };
 
-const Tokenizer = struct {
+pub const Tokenizer = struct {
     const Self = @This();
-    filename: []const u8,
-    source: []const u8,
 
     pub const Error = error{ UnclosedQuote, UnexpectedCharacter };
+    pub const ErrorMsg = struct {
+        location: Location,
+        lexeme: ?[]const u8 = null,
+    };
 
-    var err_location: Location = undefined;
-    var err_lexeme: []const u8 = undefined;
+    allocator: Allocator,
+    err_msg: ?ErrorMsg = null,
 
-    fn error_unclosed_quote(l: Location) Tokenizer.Error {
-        // std.debug.print("unclosed quote (@ {s})\n", .{l});
-        err_location = l;
-        return Tokenizer.Error.UnclosedQuote;
+    pub fn init(allocator: Allocator) !Self {
+        return .{ .allocator = allocator };
     }
 
-    fn error_unexpected_char(c: []const u8, l: Location) Tokenizer.Error {
-        // std.debug.print("unexpected character: '{c}' (@ {s})\n", .{ c, l });
-        err_location = l;
-        err_lexeme = c;
-        return Tokenizer.Error.UnexpectedCharacter;
+    pub fn deinit(self: *Self) void {
+        // noop
+        _ = self;
     }
 
-    fn tokenize(allocator: Allocator, src: []const u8) (Allocator.Error || Tokenizer.Error)!std.ArrayList(Token) {
-        var tokens = std.ArrayList(Token).init(allocator);
+    fn error_unclosed_quote(self: *Self, l: Location) Error {
+        self.err_msg = .{ .location = l };
+        return Error.UnclosedQuote;
+    }
+
+    fn error_unexpected_char(self: *Self, c: []const u8, l: Location) Error {
+        self.err_msg = .{ .location = l, .lexeme = c };
+        return Error.UnexpectedCharacter;
+    }
+
+    pub fn tokenize(self: *Self, src: []const u8) (Allocator.Error || Error)!std.ArrayList(Token) {
+        self.err_msg = null;
+
+        var tokens = std.ArrayList(Token).init(self.allocator);
         errdefer tokens.deinit();
 
         var i: usize = 0;
@@ -166,7 +174,7 @@ const Tokenizer = struct {
                         loc.advance_by(4);
                         i += 3;
                     } else {
-                        return error_unexpected_char(src[i .. i + 1], loc);
+                        return self.error_unexpected_char(src[i .. i + 1], loc);
                     }
                 },
                 'f' => {
@@ -175,7 +183,7 @@ const Tokenizer = struct {
                         loc.advance_by(5);
                         i += 4;
                     } else {
-                        return error_unexpected_char(src[i .. i + 1], loc);
+                        return self.error_unexpected_char(src[i .. i + 1], loc);
                     }
                 },
                 'n' => {
@@ -184,7 +192,7 @@ const Tokenizer = struct {
                         loc.advance_by(4);
                         i += 3;
                     } else {
-                        return error_unexpected_char(src[i .. i + 1], loc);
+                        return self.error_unexpected_char(src[i .. i + 1], loc);
                     }
                 },
                 '"' => {
@@ -198,7 +206,7 @@ const Tokenizer = struct {
                         }
                     }
                     if (j == src.len) {
-                        return error_unclosed_quote(loc);
+                        return self.error_unclosed_quote(loc);
                     }
                 },
                 else => {
@@ -213,7 +221,7 @@ const Tokenizer = struct {
                             }
                         }
                     } else {
-                        return error_unexpected_char(src[i .. i + 1], loc);
+                        return self.error_unexpected_char(src[i .. i + 1], loc);
                     }
                 },
             }
@@ -230,9 +238,11 @@ test "tokenize sample" {
         \\}
     ;
 
-    const allocator = std.heap.page_allocator;
-    const tokens = try Tokenizer.tokenize(allocator, src);
-    defer allocator.free(tokens.items);
+    var tokenizer = try Tokenizer.init(std.heap.page_allocator);
+    defer tokenizer.deinit();
+
+    const result = try tokenizer.tokenize(src);
+    defer result.deinit();
 
     const expected = [_]Token{
         Token{ .token_type = TokenType.LBrace, .location = Location.of(1, 1), .value = "{" },
@@ -252,9 +262,9 @@ test "tokenize sample" {
         Token{ .token_type = TokenType.RBrace, .location = Location.of(3, 1), .value = "}" },
     };
 
-    try std.testing.expectEqual(tokens.items.len, expected.len);
+    try std.testing.expectEqual(result.items.len, expected.len);
 
-    for (tokens.items, 0..) |actual, i| {
+    for (result.items, 0..) |actual, i| {
         try std.testing.expectEqualDeep(expected[i], actual);
     }
 }
@@ -266,9 +276,19 @@ test "tokenize error: quote not closed" {
         \\  "quote...
         \\]
     ;
-    const result = Tokenizer.tokenize(std.heap.page_allocator, src);
+
+    var tokenizer = try Tokenizer.init(std.heap.page_allocator);
+    defer tokenizer.deinit();
+
+    const result = tokenizer.tokenize(src);
+    if (result) |tokens| {
+        defer tokens.deinit();
+    } else |_| {
+        // noop
+    }
+
     try std.testing.expectError(Tokenizer.Error.UnclosedQuote, result);
-    try std.testing.expectEqual(Location.of(3, 3), Tokenizer.err_location);
+    try std.testing.expectEqual(Location.of(3, 3), tokenizer.err_msg.?.location);
 }
 
 test "tokenize error: unexpected character" {
@@ -278,8 +298,20 @@ test "tokenize error: unexpected character" {
         \\  "unexpected": !!!
         \\}
     ;
-    const result = Tokenizer.tokenize(std.heap.page_allocator, src);
+
+    var tokenizer = try Tokenizer.init(std.heap.page_allocator);
+    defer tokenizer.deinit();
+
+    const result = tokenizer.tokenize(src);
+    if (result) |tokens| {
+        defer tokens.deinit();
+    } else |_| {
+        // noop
+    }
+
     try std.testing.expectError(Tokenizer.Error.UnexpectedCharacter, result);
-    try std.testing.expectEqual(Location.of(3, 17), Tokenizer.err_location);
-    try std.testing.expectEqualDeep("!", Tokenizer.err_lexeme);
+
+    const err_msg = tokenizer.err_msg.?;
+    try std.testing.expectEqual(Location.of(3, 17), err_msg.location);
+    try std.testing.expectEqualDeep("!", err_msg.lexeme);
 }
