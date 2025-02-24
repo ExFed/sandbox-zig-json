@@ -39,11 +39,24 @@ pub const TokenType = enum {
     Null,
 };
 
-pub const Location = struct {
-    const Self = @This();
+pub const SourceUnit = struct {
+    path: []const u8,
 
+    const Self = @This();
+    const MAX_FILE_SIZE: usize = 1024 * 1024 * 1024; // 1GB
+
+    pub fn readAll(self: Self, allocator: Allocator) ![]u8 {
+        const file = try std.fs.openFileAbsolute(self.path, .{});
+        defer file.close();
+        return file.readToEndAlloc(allocator, MAX_FILE_SIZE);
+    }
+};
+
+pub const Location = struct {
     line: usize,
     column: usize,
+
+    const Self = @This();
 
     fn init() Location {
         return of(1, 1);
@@ -83,10 +96,11 @@ pub const Location = struct {
 };
 
 pub const Token = struct {
-    const Self = @This();
     token_type: TokenType,
     location: Location,
     value: []const u8,
+
+    const Self = @This();
 
     pub fn format(
         self: Self,
@@ -102,6 +116,8 @@ pub const Token = struct {
 };
 
 pub const Tokenizer = struct {
+    err_msg: ?ErrorMsg = null,
+
     const Self = @This();
 
     pub const Error = error{ UnclosedQuote, UnexpectedCharacter };
@@ -109,18 +125,6 @@ pub const Tokenizer = struct {
         location: Location,
         lexeme: ?[]const u8 = null,
     };
-
-    allocator: Allocator,
-    err_msg: ?ErrorMsg = null,
-
-    pub fn init(allocator: Allocator) !Self {
-        return .{ .allocator = allocator };
-    }
-
-    pub fn deinit(self: *Self) void {
-        // noop
-        _ = self;
-    }
 
     fn error_unclosed_quote(self: *Self, l: Location) Error {
         self.err_msg = .{ .location = l };
@@ -132,11 +136,8 @@ pub const Tokenizer = struct {
         return Error.UnexpectedCharacter;
     }
 
-    pub fn tokenize(self: *Self, src: []const u8) (Allocator.Error || Error)!std.ArrayList(Token) {
+    pub fn tokenize(self: *Self, src: []const u8, tokens: *std.ArrayList(Token)) (Allocator.Error || Error)!void {
         self.err_msg = null;
-
-        var tokens = std.ArrayList(Token).init(self.allocator);
-        errdefer tokens.deinit();
 
         var i: usize = 0;
         var loc: Location = Location.init();
@@ -226,8 +227,6 @@ pub const Tokenizer = struct {
                 },
             }
         }
-
-        return tokens;
     }
 };
 
