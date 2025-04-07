@@ -102,6 +102,18 @@ pub const Token = struct {
 
     const Self = @This();
 
+    pub fn get_token_type(self: *const Self) TokenType {
+        return self.token_type;
+    }
+
+    pub fn get_location(self: *const Self) Location {
+        return self.location;
+    }
+
+    pub fn get_value(self: *const Self) []const u8 {
+        return self.value;
+    }
+
     pub fn format(
         self: Self,
         comptime fmt: []const u8,
@@ -111,7 +123,7 @@ pub const Token = struct {
         _ = fmt;
         _ = options;
 
-        try writer.print("(Token {any} {any} {s})", .{ self.token_type, self.location, self.value });
+        try writer.print("(Token {any} {any} {s})", .{ self.get_token_type(), self.get_location(), self.get_value() });
     }
 };
 
@@ -237,11 +249,11 @@ test "tokenize sample" {
         \\}
     ;
 
-    var tokenizer = try Tokenizer.init(std.heap.page_allocator);
-    defer tokenizer.deinit();
-
-    const result = try tokenizer.tokenize(src);
+    var tokenizer = Tokenizer{};
+    var result = std.ArrayList(Token).init(std.heap.page_allocator);
     defer result.deinit();
+
+    try tokenizer.tokenize(src, &result);
 
     const expected = [_]Token{
         Token{ .token_type = TokenType.LBrace, .location = Location.of(1, 1), .value = "{" },
@@ -276,17 +288,11 @@ test "tokenize error: quote not closed" {
         \\]
     ;
 
-    var tokenizer = try Tokenizer.init(std.heap.page_allocator);
-    defer tokenizer.deinit();
+    var tokenizer = Tokenizer{};
+    var result = std.ArrayList(Token).init(std.heap.page_allocator);
+    defer result.deinit();
 
-    const result = tokenizer.tokenize(src);
-    if (result) |tokens| {
-        defer tokens.deinit();
-    } else |_| {
-        // noop
-    }
-
-    try std.testing.expectError(Tokenizer.Error.UnclosedQuote, result);
+    try std.testing.expectError(Tokenizer.Error.UnclosedQuote, tokenizer.tokenize(src, &result));
     try std.testing.expectEqual(Location.of(3, 3), tokenizer.err_msg.?.location);
 }
 
@@ -298,17 +304,11 @@ test "tokenize error: unexpected character" {
         \\}
     ;
 
-    var tokenizer = try Tokenizer.init(std.heap.page_allocator);
-    defer tokenizer.deinit();
+    var tokenizer = Tokenizer{};
+    var result = std.ArrayList(Token).init(std.heap.page_allocator);
+    defer result.deinit();
 
-    const result = tokenizer.tokenize(src);
-    if (result) |tokens| {
-        defer tokens.deinit();
-    } else |_| {
-        // noop
-    }
-
-    try std.testing.expectError(Tokenizer.Error.UnexpectedCharacter, result);
+    try std.testing.expectError(Tokenizer.Error.UnexpectedCharacter, tokenizer.tokenize(src, &result));
 
     const err_msg = tokenizer.err_msg.?;
     try std.testing.expectEqual(Location.of(3, 17), err_msg.location);
