@@ -6,7 +6,7 @@ pub fn Result(comptime T: type, comptime E: type) type {
         const IsOk = error{Error};
         const IsErr = error{Error};
 
-        ok_value: ?T = null,
+        ok_value: T = undefined,
         err_value: ?E = null,
 
         pub fn ok(value: T) Self {
@@ -18,21 +18,15 @@ pub fn Result(comptime T: type, comptime E: type) type {
         }
 
         pub fn is_ok(self: *const Self) bool {
-            return null != self.err_value;
+            return null == self.err_value;
         }
 
         pub fn get(self: *const Self) IsErr!T {
-            if (self.ok_value) |v| {
-                return v;
-            }
-            return IsErr.Error;
+            return if (self.is_ok()) self.ok_value else IsErr.Error;
         }
 
         pub fn get_err(self: *const Self) IsOk!E {
-            if (self.err_value) |v| {
-                return v;
-            }
-            return IsOk.Error;
+            return if (self.is_ok()) IsOk.Error else self.err_value.?;
         }
     };
 }
@@ -42,15 +36,18 @@ test "results" {
     const R = Result(u64, []const u8);
 
     const ok_result = R.ok(1337);
+    try t.expect(ok_result.is_ok());
     try t.expectEqual(1337, ok_result.get());
     try t.expectError(R.IsOk.Error, ok_result.get_err());
 
     const err_result = R.err("oh no!");
+    try t.expect(!err_result.is_ok());
     try t.expectError(R.IsErr.Error, err_result.get());
     try t.expectEqualStrings("oh no!", try err_result.get_err());
 
-    const N = Result(?bool, []const u8);
+    const N = Result(?u8, []const u8);
 
     const null_result = N.ok(null);
+    try t.expect(null_result.is_ok());
     try t.expectEqual(null, null_result.get());
 }
